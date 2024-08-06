@@ -14,7 +14,9 @@ c_id = 'CHANNEL ID'
 
 today = datetime.datetime.now()
 last_week = (datetime.datetime.now() - datetime.timedelta(days=7))
+critical_software_list = ["microsoft", "windows", "linux", "mac os", "kubernetes", "azure", "amazon", "aws", "gcp", "vmware", "palo alto", "global protect", "panorama","pan-os", "fortigate", "esxi", "docker", "apple", "rce", "remote code execution"]
 year = datetime.datetime.now().year
+#year = '2024'
 csv_file_path = rf'C:\Cases\CVES_Database.csv'
 github_urls = []
 ids = []
@@ -33,16 +35,21 @@ def extract_column_cve(file_path):
                 column_cve_values.append(row[0])  # Append the first column's value
 def get_cves():
 
-    r = nvdlib.searchCVE(pubStartDate = last_week, pubEndDate = today, cvssV3Severity = 'Critical' )
+    r = nvdlib.searchCVE(pubStartDate = last_week, pubEndDate = today, cvssV3Severity='Critical')
     for i in r:
-        if year in i.id:
+        if str(year) in i.id:
             if i.id not in column_cve_values:
-                ids.append(i.id)
+                description = i.descriptions[0].value
+                cve_id = str(i.id)
+                for software in critical_software_list:
+                    if software.lower() in description.lower() or software.lower() in i.sourceIdentifier.lower():
+                        cve_id = str(i.id + " critical_software")
+                        break
+                ids.append(cve_id)
                 nist_url.append(i.url)
                 published.append(re.findall(r'\d{4}-\d{2}-\d{2}', i.published)[0])
-                cve_year.append(re.findall(r'\d{4}', i.published)[0])
-                description = i.descriptions[0].value
                 descriptions.append(str(description).replace('\n',''))
+                cve_year.append(re.findall(r'\d{4}', i.published)[0])
             else:
                 continue
         else:
@@ -98,16 +105,24 @@ def main():
 
     for cve in ids:
         fetch_github_github_urls(cve)
-        info = [cve,cve_year[ids.index(cve)],published[ids.index(cve)], nist_url[ids.index(cve)], github_urls[ids.index(cve)]]
+        info = [str(cve.replace(" critical_software", "")), cve_year[ids.index(cve)], published[ids.index(cve)], nist_url[ids.index(cve)], github_urls[ids.index(cve)]]
         write_to_csv(info)
 
     if len(ids) != 0:
         for i in range(0, len(ids)):
-            message += f"*{i+1})   `CVE ID`:* {ids[i]}\n    *`URL`:* {nist_url[i]}\n    *`Description`:* {descriptions[i]} \n   *`Published`:* {published[i]}\n\n--------------------------------------------------------------------------------------------------------------------------------------------------------------\n\n"
+            if "critical_software" in ids[i]:
+                id = ids[i].replace("critical_software", "")
+                message += f"*{i+1})* {id}  `CRITICAL SOFTWARE !`\n\n  *`URL`:* {nist_url[i]}\n  *`Description`:* {descriptions[i]} \n  *`Published`:* {published[i]}\n\n--------------------------------------------------------------------------------------------------------------------------------------------------------------\n\n"
+            else:
+                message += f"*{i+1})* {ids[i]}\n\n  *`URL`:* {nist_url[i]}\n  *`Description`:* {descriptions[i]} \n  *`Published`:* {published[i]}\n\n--------------------------------------------------------------------------------------------------------------------------------------------------------------\n\n"
+
         send_update_slack(s_token, c_id, message)
         upload_csv_to_slack(s_token, c_id, csv_file_path)
 
     else:
+        message += "[+] No critical CVEs found"
+        send_update_slack(s_token, c_id, message)
+
         print("no CVEs found")
 
     print("[+] Done!")
