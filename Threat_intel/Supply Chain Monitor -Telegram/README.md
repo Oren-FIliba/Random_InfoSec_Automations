@@ -15,6 +15,10 @@ Two Python scripts are included:
   - `Ecosystem:`
   - `Summary:`
   - `Registry:`
+- `telegram_group_monitor.py` also enriches npm alerts with:
+  - `package_name` and `version` split from `Package:`
+  - npm package metadata from `https://registry.npmjs.org/{package}/{version}`
+  - weekly downloads from `https://api.npmjs.org/downloads/point/last-week/{package}`
 
 ## Install
 
@@ -32,13 +36,12 @@ Create Telegram API credentials at https://my.telegram.org:
 ## Generic script usage (recommended)
 
 ### Option A: environment variables
-
 ```bash
-export TG_API_ID="31751245"
+export TG_API_ID="your_api_id"
 export TG_API_HASH="your_api_hash"
-export TG_PHONE="+972.."
+export TG_PHONE="+1234567890"
 export WEBHOOK_URL="https://your-webhook-endpoint"
-export TG_SOURCE="https://t.me..."
+export TG_SOURCE="https://t.me/+Pi4b85rUUKEzMjFk"
 python3 telegram_channel_webhook.py
 ```
 
@@ -46,10 +49,10 @@ python3 telegram_channel_webhook.py
 
 ```bash
 python3 telegram_channel_webhook.py \
-  --api-id 31755259 \
+  --api-id 31753339 \
   --api-hash "your_api_hash" \
-  --phone "+972..." \
-  --source "https://t.me/..." \
+  --phone "+972508104300" \
+  --source "https://t.me/+Pi4b85rUUKEzMjFk" \
   --webhook-url "https://your-webhook-endpoint"
 ```
 
@@ -82,6 +85,29 @@ unset TG_SEND_LAST_N
 python3 telegram_channel_webhook.py
 ```
 
+## Supply Chain Monitor script
+
+`telegram_group_monitor.py` is preconfigured for:
+
+- `https://t.me/+Pi4b85rUUKEzMjFk`
+
+Run it:
+
+```bash
+export TG_API_ID="your_api_id"
+export TG_API_HASH="your_api_hash"
+export TG_PHONE="+1234567890"
+export WEBHOOK_URL="https://your-webhook-endpoint"
+python3 telegram_group_monitor.py
+```
+
+Test mode (last 2 messages):
+
+```bash
+export TG_SEND_LAST_N="2"
+python3 telegram_group_monitor.py
+```
+
 ## First login and 2FA
 
 On first run, Telegram sends a login code.
@@ -106,9 +132,25 @@ On first run, Telegram sends a login code.
     "text": "raw message text",
     "parsed": {
       "package": "node-ci-utils 2.1.4",
+      "package_name": "node-ci-utils",
+      "version": "2.1.4",
       "ecosystem": "npm",
       "summary": "...",
-      "registry": "https://www.npmjs.com/package/node-ci-utils/v/2.1.4"
+      "registry": "https://www.npmjs.com/package/node-ci-utils/v/2.1.4",
+      "npm": {
+        "registry_url": "https://registry.npmjs.org/node-ci-utils/2.1.4",
+        "downloads_url": "https://api.npmjs.org/downloads/point/last-week/node-ci-utils",
+        "metadata": {
+          "name": "node-ci-utils",
+          "version": "2.1.4"
+        },
+        "downloads_last_week": {
+          "downloads": 0,
+          "package": "node-ci-utils",
+          "start": "2026-05-07",
+          "end": "2026-05-13"
+        }
+      }
     },
     "date": "2026-05-14T16:01:45+00:00",
     "reply_to_msg_id": null,

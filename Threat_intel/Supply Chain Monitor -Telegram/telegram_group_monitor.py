@@ -4,6 +4,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import requests
 from telethon import TelegramClient, events
@@ -39,6 +40,41 @@ def send_webhook(payload):
     response.raise_for_status()
 
 
+def get_npm_metadata(package_name, version):
+    if not package_name or not version:
+        return None
+
+    safe_name = quote(package_name, safe="@/")
+    safe_version = quote(version, safe="")
+
+    package_url = f"https://registry.npmjs.org/{safe_name}/{safe_version}"
+    downloads_url = f"https://api.npmjs.org/downloads/point/last-week/{safe_name}"
+
+    metadata = None
+    downloads = None
+
+    try:
+        meta_resp = requests.get(package_url, timeout=WEBHOOK_TIMEOUT)
+        if meta_resp.ok:
+            metadata = meta_resp.json()
+    except Exception:
+        metadata = None
+
+    try:
+        dl_resp = requests.get(downloads_url, timeout=WEBHOOK_TIMEOUT)
+        if dl_resp.ok:
+            downloads = dl_resp.json()
+    except Exception:
+        downloads = None
+
+    return {
+        "registry_url": package_url,
+        "downloads_url": downloads_url,
+        "metadata": metadata,
+        "downloads_last_week": downloads,
+    }
+
+
 def parse_alert_text(text):
     if not text:
         return None
@@ -53,8 +89,22 @@ def parse_alert_text(text):
         re.MULTILINE | re.DOTALL,
     )
 
+    raw_package = package_match.group(1).strip() if package_match else None
+    package_name = None
+    version = None
+
+    if raw_package:
+        split_match = re.match(r"^(.+?)\s+([0-9A-Za-z][0-9A-Za-z._+-]*)$", raw_package)
+        if split_match:
+            package_name = split_match.group(1).strip()
+            version = split_match.group(2).strip()
+        else:
+            package_name = raw_package
+
     parsed = {
-        "package": package_match.group(1).strip() if package_match else None,
+        "package": raw_package,
+        "package_name": package_name,
+        "version": version,
         "ecosystem": ecosystem_match.group(1).strip() if ecosystem_match else None,
         "summary": summary_match.group(1).strip() if summary_match else None,
         "registry": registry_match.group(1).strip() if registry_match else None,
@@ -67,6 +117,14 @@ def parse_alert_text(text):
 
 async def build_payload(event, message, sender):
     parsed_alert = parse_alert_text(message.message)
+    if parsed_alert and (parsed_alert.get("ecosystem") or "").lower() == "npm":
+        npm_data = get_npm_metadata(
+            parsed_alert.get("package_name"),
+            parsed_alert.get("version"),
+        )
+        if npm_data:
+            parsed_alert["npm"] = npm_data
+
     return {
         "event": event,
         "captured_at": datetime.now(timezone.utc).isoformat(),
