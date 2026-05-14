@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  ingest-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    command: python ingest_api.py
+    env_file:
+      - .env.pipeline
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./pipeline_data:/app/pipeline_data
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    command: python worker.py
+    env_file:
+      - .env.pipeline
+    depends_on:
+      - ingest-api
+    volumes:
+      - ./pipeline_data:/app/pipeline_data
