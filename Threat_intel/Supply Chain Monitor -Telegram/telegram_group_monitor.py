@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+import asyncio
+import json
+import os
+import re
+from datetime import datetime, timezone
+
+import requests
+from telethon import TelegramClient, events
+
+
+API_ID = int(os.environ["TG_API_ID"])
+API_HASH = os.environ["TG_API_HASH"]
+PHONE = os.environ.get("TG_PHONE")
+LOGIN_CODE = os.environ.get("TG_LOGIN_CODE")
+TWOFA_PASSWORD = os.environ.get("TG_2FA_PASSWORD")
+SESSION_NAME = os.environ.get("TG_SESSION", "supply_chain_monitor")
+GROUP_LINK = os.environ.get("TG_GROUP_LINK", "https://t.me/+Pi4b85rUUKEzMjFk")
+WEBHOOK_URL = os.environ["WEBHOOK_URL"]
+WEBHOOK_TIMEOUT = int(os.environ.get("WEBHOOK_TIMEOUT", "10"))
+SEND_LAST_N = int(os.environ.get("TG_SEND_LAST_N", "0"))
+
+
+def to_iso8601(dt):
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def send_webhook(payload):
+    response = requests.post(
+        WEBHOOK_URL,
+        data=json.dumps(payload),
+        headers={"Content-Type": "application/json"},
+        timeout=WEBHOOK_TIMEOUT,
+    )
+    response.raise_for_status()
+
+
+def parse_alert_text(text):
+    if not text:
+        return None
+
+    package_match = re.search(r"^Package:\s*(.+)$", text, re.MULTILINE)
+    ecosystem_match = re.search(r"^Ecosystem:\s*(.+)$", text, re.MULTILINE)
+    registry_match = re.search(r"^🔗\s*Registry:\s*(.+)$", text, re.MULTILINE)
+
+    summary_match = re.search(
+        r"^Summary:\s*\n(.*?)(?:\n\s*🔗\s*Registry:|\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+
+    parsed = {
+        "package": package_match.group(1).strip() if package_match else None,
+        "ecosystem": ecosystem_match.group(1).strip() if ecosystem_match else None,
+        "summary": summary_match.group(1).strip() if summary_match else None,
+        "registry": registry_match.group(1).strip() if registry_match else None,
+    }
+
+    if any(parsed.values()):
+        return parsed
+    return None
+
+
+async def build_payload(event, message, sender):
+    parsed_alert = parse_alert_text(message.message)
+    return {
+        "event": event,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "chat": {
+            "id": message.chat_id,
+            "title": getattr(message.chat, "title", None),
+            "username": getattr(message.chat, "username", None),
+        },
+        "message": {
+            "id": message.id,
+            "text": message.message,
+            "parsed": parsed_alert,
+            "date": to_iso8601(message.date),
+            "reply_to_msg_id": getattr(message, "reply_to_msg_id", None),
+            "views": getattr(message, "views", None),
+            "forwards": getattr(message, "forwards", None),
+        },
+        "sender": {
+            "id": getattr(sender, "id", None),
+            "username": getattr(sender, "username", None),
+            "first_name": getattr(sender, "first_name", None),
+            "last_name": getattr(sender, "last_name", None),
+        },
+    }
+
+
+async def main():
+    client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+    await client.connect()
+
+    if not await client.is_user_authorized():
+        if not PHONE:
+            raise RuntimeError("Set TG_PHONE for first-time login.")
+        await client.send_code_request(PHONE)
+        code = LOGIN_CODE or input("Enter Telegram login code: ").strip()
+        try:
+            await client.sign_in(PHONE, code)
+        except Exception as exc:
+            if "SESSION_PASSWORD_NEEDED" in str(exc) and TWOFA_PASSWORD:
+                await client.sign_in(password=TWOFA_PASSWORD)
+            else:
+                raise
+
+    target = await client.get_entity(GROUP_LINK)
+    me = await client.get_me()
+    print(f"Logged in as: {me.username or me.id}")
+    print(f"Monitoring: {getattr(target, 'title', str(target.id))}")
+    print(f"Webhook: {WEBHOOK_URL}")
+
+    if SEND_LAST_N > 0:
+        recent = []
+        async for msg in client.iter_messages(target, limit=SEND_LAST_N):
+            recent.append(msg)
+
+        for msg in reversed(recent):
+            sender = await msg.get_sender()
+            payload = await build_payload("telegram.recent_message", msg, sender)
+            send_webhook(payload)
+            print(f"Forwarded recent message {msg.id}")
+
+        print(f"Sent last {len(recent)} messages. Exiting test mode.")
+        return
+
+    @client.on(events.NewMessage(chats=target))
+    async def handler(event):
+        message = event.message
+        sender = await event.get_sender()
+        payload = await build_payload("telegram.new_message", message, sender)
+
+        try:
+            send_webhook(payload)
+            print(f"Forwarded message {message.id}")
+        except Exception as exc:
+            print(f"Failed to send webhook for message {message.id}: {exc}")
+
+    print("Waiting for new messages...")
+    await client.run_until_disconnected()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
